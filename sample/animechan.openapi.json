@@ -1,0 +1,31 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Animechan", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.animechan.io/v1" }],
+  "paths": {
+    "/quotes/random": { "get": {
+      "operationId": "getRandomQuote",
+      "summary": "Get a random anime quote. Optionally restrict to one anime or one character.",
+      "parameters": [
+        { "name": "anime", "in": "query", "schema": { "type": "string" }, "description": "Anime name, e.g. Naruto" },
+        { "name": "character", "in": "query", "schema": { "type": "string" }, "description": "Character name, e.g. Saitama" }
+      ] } },
+    "/quotes": { "get": {
+      "operationId": "getQuotes",
+      "summary": "List quotes from one anime or one character (paginated). Provide anime or character.",
+      "parameters": [
+        { "name": "anime", "in": "query", "schema": { "type": "string" }, "description": "Anime name" },
+        { "name": "character", "in": "query", "schema": { "type": "string" }, "description": "Character name" },
+        { "name": "page", "in": "query", "schema": { "type": "integer" }, "description": "Page number, starting at 1" }
+      ] } },
+    "/anime/{idOrName}": { "get": {
+      "operationId": "getAnime",
+      "summary": "Get details (episode count, summary) for one anime by id or name.",
+      "parameters": [
+        { "name": "idOrName", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Anime id or name" }
+      ] } },
+    "/anime": { "get": {
+      "operationId": "listAnime",
+      "summary": "List the full anime catalogue." } }
+  }
+}
