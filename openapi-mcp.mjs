@@ -2,7 +2,12 @@
 // openapi-mcp.mjs — turn any OpenAPI 3 spec into a running MCP server. No dependencies (Node 18+).
 //
 // Usage:   node openapi-mcp.mjs <spec-url-or-file> [base-url]
-// Env:     API_HEADERS='{"Authorization":"Bearer xyz"}'   extra headers sent on every call (auth)
+// Env:     API_TOKEN=xyz                                  your secret; the spec's securitySchemes decide where it goes:
+//                                                         bearer -> Authorization header, apiKey -> header/query/cookie, basic -> "user:pass"
+//          OAUTH_CLIENT_ID / OAUTH_CLIENT_SECRET          OAuth2 client-credentials (token fetched + refreshed automatically)
+//          OAUTH_REFRESH_TOKEN                            OAuth2 refresh-token grant (you did the login once, elsewhere)
+//          OAUTH_TOKEN_URL / OAUTH_SCOPE                  optional: override tokenUrl from the spec / request a scope
+//          API_HEADERS='{"Authorization":"Bearer xyz"}'   extra headers sent on every call (auth)
 //          TOOL_FILTER='^(get|list)'                      only expose tools whose name matches this regex
 //          MCP_AUTH_TOKEN=secret                          (HTTP mode) require "Authorization: Bearer secret"
 //
@@ -65,7 +70,48 @@ for (const [path, item] of Object.entries(spec.paths || {})) {
   }
 }
 
-// ---------- 3. Calling a tool = making the real HTTP request ----------
+// ---------- 3. Auth: put the secret where the spec's securityScheme says ----------
+const schemes = spec.components?.securitySchemes || {};
+const scheme = deref(schemes[Object.keys(spec.security?.[0] || schemes)[0]]); // first scheme the API requires
+let refresh = process.env.OAUTH_REFRESH_TOKEN, tokenCache; // cache the *promise* so parallel tool calls share one token request
+
+function oauthToken(s) {
+  const e = process.env;
+  if (!e.OAUTH_CLIENT_ID && !refresh) return e.API_TOKEN; // no OAuth setup: treat API_TOKEN as a ready access token
+  if (tokenCache && Date.now() < tokenCache.expires) return tokenCache.promise;
+  const entry = (tokenCache = { expires: Infinity });
+  entry.promise = (async () => {
+    const url = e.OAUTH_TOKEN_URL || Object.values(s.flows || {}).map(f => f.tokenUrl).find(Boolean);
+    if (!url) throw new Error("No OAuth token URL in the spec: set OAUTH_TOKEN_URL");
+    const form = new URLSearchParams(refresh
+      ? { grant_type: "refresh_token", refresh_token: refresh }
+      : { grant_type: "client_credentials", ...(e.OAUTH_SCOPE && { scope: e.OAUTH_SCOPE }) });
+    const headers = { "content-type": "application/x-www-form-urlencoded" };
+    if (e.OAUTH_CLIENT_ID) headers.authorization = "Basic " + Buffer.from(`${e.OAUTH_CLIENT_ID}:${e.OAUTH_CLIENT_SECRET || ""}`).toString("base64");
+    const res = await fetch(url, { method: "POST", headers, body: form });
+    if (!res.ok) throw new Error(`OAuth token request failed: HTTP ${res.status}`);
+    const j = await res.json();
+    refresh = j.refresh_token || refresh; // some providers rotate refresh tokens
+    entry.expires = Date.now() + ((j.expires_in || 3600) - 30) * 1000;
+    return j.access_token;
+  })().catch(err => { tokenCache = null; throw err; });
+  return entry.promise;
+}
+
+async function authorize(headers, query) {
+  if (!scheme) return;
+  const token = /oauth2|openIdConnect/.test(scheme.type) ? await oauthToken(scheme) : process.env.API_TOKEN;
+  if (!token) return;
+  if (scheme.type === "apiKey") {
+    if (scheme.in === "query") query.set(scheme.name, token);
+    else if (scheme.in === "cookie") headers.cookie = `${scheme.name}=${token}`;
+    else headers[scheme.name] = token;
+  } else {
+    headers.authorization = scheme.scheme?.toLowerCase() === "basic" ? "Basic " + Buffer.from(token).toString("base64") : `Bearer ${token}`;
+  }
+}
+
+// ---------- 4. Calling a tool = making the real HTTP request ----------
 async function call({ method, path, params, hasBody }, args) {
   const query = new URLSearchParams();
   const headers = { "content-type": "application/json", ...JSON.parse(process.env.API_HEADERS || "{}") };
@@ -74,6 +120,7 @@ async function call({ method, path, params, hasBody }, args) {
     if (p.in === "query") query.set(p.name, args[p.name]);
     if (p.in === "header") headers[p.name] = args[p.name];
   }
+  await authorize(headers, query);
   const url = path.replace(/\{([^}]+)\}/g, (_, k) => encodeURIComponent(args[k])) + (query.toString() ? `?${query}` : "");
   const res = await fetch(base + url, {
     method: method.toUpperCase(), headers, body: hasBody && args.body ? JSON.stringify(args.body) : undefined,
@@ -81,7 +128,7 @@ async function call({ method, path, params, hasBody }, args) {
   return { isError: !res.ok, content: [{ type: "text", text: `HTTP ${res.status}\n` + (await res.text()).slice(0, 50_000) }] };
 }
 
-// ---------- 4. Minimal MCP server: JSON-RPC 2.0 (transport-independent) ----------
+// ---------- 5. Minimal MCP server: JSON-RPC 2.0 (transport-independent) ----------
 const methods = {
   initialize: p => ({ protocolVersion: p.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: spec.info?.title || "openapi-mcp", version: spec.info?.version || "1.0.0" } }),
   ping: () => ({}),
@@ -101,7 +148,7 @@ async function handle(msg) {
   catch (e) { return reply({ error: { code: -32603, message: e.message } }); }
 }
 
-// ---------- 5. Transports ----------
+// ---------- 6. Transports ----------
 if (!port) {
   // Local: the MCP client launches this process and talks over stdin/stdout
   createInterface({ input: process.stdin }).on("line", async line => {
