@@ -1,0 +1,12 @@
+{
+  "name": "@asthanaji/openapi-mcp",
+  "version": "0.1.0",
+  "description": "Turn any OpenAPI 3 spec into a working MCP server. One file, local (stdio) or remote (HTTP).",
+  "bin": { "openapi-mcp": "./openapi-mcp.mjs" },
+  "files": ["openapi-mcp.mjs", "sample/animechan.openapi.json", "README.md"],
+  "engines": { "node": ">=18" },
+  "dependencies": { "yaml": "^2.5.0" },
+  "keywords": ["mcp", "model-context-protocol", "openapi", "swagger", "api", "ai", "llm"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Asthanaji05/OpenAPI_MCP.git" }
+}
