@@ -4,12 +4,19 @@
 // Usage:   node openapi-mcp.mjs <spec-url-or-file> [base-url]
 // Env:     API_HEADERS='{"Authorization":"Bearer xyz"}'   extra headers sent on every call (auth)
 //          TOOL_FILTER='^(get|list)'                      only expose tools whose name matches this regex
-// Client:  { "command": "npx", "args": ["openapi-mcp", "https://petstore3.swagger.io/api/v3/openapi.json"] }
+//          MCP_AUTH_TOKEN=secret                          (HTTP mode) require "Authorization: Bearer secret"
+//
+// Two modes:  default        local stdio server, launched by the MCP client
+//             --http <port>  remote server, POST http://host:<port>/mcp   (put --http last)
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { createServer } from "node:http";
 
-const [src, baseArg] = process.argv.slice(2);
-if (!src) { console.error("Usage: openapi-mcp.mjs <spec-url-or-file> [base-url]"); process.exit(1); }
+const args = process.argv.slice(2);
+const flag = args.indexOf("--http");
+const port = flag >= 0 ? Number(args.splice(flag, 2)[1]) || process.env.PORT || 3000 : 0;
+const [src, baseArg] = args;
+if (!src) { console.error("Usage: openapi-mcp.mjs <spec-url-or-file> [base-url] [--http <port>]"); process.exit(1); }
 
 // ---------- 1. Load the spec (JSON, or YAML if `npm i yaml` is installed) ----------
 const raw = /^https?:/.test(src) ? await (await fetch(src)).text() : readFileSync(src, "utf8");
@@ -74,7 +81,7 @@ async function call({ method, path, params, hasBody }, args) {
   return { isError: !res.ok, content: [{ type: "text", text: `HTTP ${res.status}\n` + (await res.text()).slice(0, 50_000) }] };
 }
 
-// ---------- 4. Minimal MCP server: JSON-RPC 2.0 over stdio ----------
+// ---------- 4. Minimal MCP server: JSON-RPC 2.0 (transport-independent) ----------
 const methods = {
   initialize: p => ({ protocolVersion: p.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: spec.info?.title || "openapi-mcp", version: spec.info?.version || "1.0.0" } }),
   ping: () => ({}),
@@ -85,18 +92,38 @@ const methods = {
   },
 };
 
-const send = msg => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\n");
+// One JSON-RPC message in, one reply out (null for notifications, which need no reply)
+async function handle(msg) {
+  if (msg.id === undefined) return null;
+  const reply = x => ({ jsonrpc: "2.0", id: msg.id, ...x });
+  if (!methods[msg.method]) return reply({ error: { code: -32601, message: `Method not found: ${msg.method}` } });
+  try { return reply({ result: await methods[msg.method](msg.params || {}) }); }
+  catch (e) { return reply({ error: { code: -32603, message: e.message } }); }
+}
 
-createInterface({ input: process.stdin }).on("line", async line => {
-  let msg;
-  try { msg = JSON.parse(line); } catch { return; }
-  if (msg.id === undefined) return; // notifications need no reply
-  try {
-    if (!methods[msg.method]) return send({ id: msg.id, error: { code: -32601, message: `Method not found: ${msg.method}` } });
-    send({ id: msg.id, result: await methods[msg.method](msg.params || {}) });
-  } catch (e) {
-    send({ id: msg.id, error: { code: -32603, message: e.message } });
-  }
-});
+// ---------- 5. Transports ----------
+if (!port) {
+  // Local: the MCP client launches this process and talks over stdin/stdout
+  createInterface({ input: process.stdin }).on("line", async line => {
+    let msg; try { msg = JSON.parse(line); } catch { return; }
+    const out = await handle(msg);
+    if (out) process.stdout.write(JSON.stringify(out) + "\n");
+  });
+} else {
+  // Remote: same messages, sent as HTTP POST to /mcp
+  const token = process.env.MCP_AUTH_TOKEN;
+  if (!token) console.error("WARNING: MCP_AUTH_TOKEN is not set - anyone who can reach this server can call your API.");
+  createServer(async (req, res) => {
+    const end = (code, text = "") => res.writeHead(code).end(text);
+    if (req.url !== "/mcp") return end(404, "Not found");
+    if (req.method !== "POST") return end(405, "Use POST");
+    if (token && req.headers.authorization !== `Bearer ${token}`) return end(401, "Unauthorized");
+    let data = ""; for await (const chunk of req) data += chunk;
+    let msg; try { msg = JSON.parse(data); } catch { return end(400, "Bad JSON"); }
+    const out = await handle(msg);
+    if (!out) return end(202);
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(out));
+  }).listen(port, () => console.error(`openapi-mcp: listening on http://localhost:${port}/mcp`));
+}
 
 console.error(`openapi-mcp: ${Object.keys(tools).length} tools from "${spec.info?.title}" -> ${base}`);
