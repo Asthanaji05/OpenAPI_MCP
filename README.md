@@ -1,5 +1,4 @@
-# MCP-base
-# openapi-mcp
+# OpenAPI MCP
 
 Turn any OpenAPI 3 spec into a working [MCP](https://modelcontextprotocol.io) server. One file, about 130 lines, no dependencies.
 
