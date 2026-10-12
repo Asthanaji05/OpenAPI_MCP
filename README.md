@@ -15,7 +15,7 @@ Requires Node 18 or newer.
 ```bash
 git clone <this-repo>
 cd openapi-mcp
-node openapi-mcp.mjs examples/animechan.openapi.json
+node openapi-mcp.mjs sample/animechan.openapi.json
 ```
 
 It prints `openapi-mcp: 4 tools from "Animechan" -> ...` and then waits silently for an MCP client. That is normal: it talks JSON-RPC over stdin/stdout and is not meant to be read by humans.
@@ -44,7 +44,7 @@ If the client can't find `node`, use the full path from `which node`.
 Start the server, then register it:
 
 ```bash
-MCP_AUTH_TOKEN=secret node openapi-mcp.mjs examples/animechan.openapi.json --http 8787
+MCP_AUTH_TOKEN=secret node openapi-mcp.mjs sample/animechan.openapi.json --http 8787
 
 claude mcp add --transport http animechan http://localhost:8787/mcp \
   --header "Authorization: Bearer secret"
@@ -136,7 +136,7 @@ Notes:
 
 ## APIs without an OpenAPI spec
 
-Many small public APIs only have HTML docs. For those, write a small spec by hand (see `examples/animechan.openapi.json`, 4 tools in about 35 lines), then run it the same way.
+Many small public APIs only have HTML docs. For those, write a small spec by hand (see `sample/animechan.openapi.json`, 4 tools in about 35 lines), then run it the same way.
 
 ## Limitations
 
