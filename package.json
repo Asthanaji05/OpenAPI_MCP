@@ -1,6 +1,8 @@
 {
   "name": "@asthanaji/openapi-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "mcpName": "io.github.Asthanaji05/openapi-mcp",
+  "publishConfig": { "access": "public" },
   "description": "Turn any OpenAPI 3 spec into a working MCP server. One file, local (stdio) or remote (HTTP).",
   "bin": { "openapi-mcp": "./openapi-mcp.mjs" },
   "files": ["openapi-mcp.mjs", "sample/animechan.openapi.json", "README.md"],
